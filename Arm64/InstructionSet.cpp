@@ -75,6 +75,17 @@ namespace Arm64 {
             std::string("WIDE_IMMEDIATE"),
             std::string("UNKNOWN"),
     };
+    std::array<std::string, CONDITION_COUNT> conditionNames {
+            std::string("EQ"),
+            std::string("CS"),
+            std::string("MI"),
+            std::string("VS"),
+            std::string("HI"),
+            std::string("GE"),
+            std::string("GT"),
+            std::string("AL"),
+            std::string("UNK"),
+    };
 
     Instruction::Instruction(uint64_t address, std::vector<uint32_t> &buffer) : _buffer(buffer) {
         _instructionMap = InstructionMap();
@@ -127,6 +138,35 @@ namespace Arm64 {
             case instructionTypes::ADRP_INSN:
             case instructionTypes::SUB_INSN:
             case instructionTypes::SUBS_INSN:
+            case instructionTypes::B_INSN: {
+                if(_variant == instructionVariants::CONDITIONAL_VART) {
+                    uint64_t tmp = _instruction >> 0x5;
+                    uint64_t tmp2 = tmp % (1 << ((0x17) - (0x5) + 1));
+                    uint64_t tmp3 = (tmp2 & 1 << (0x12)) >> 0x12;
+                    for (int i = 0x13; i < 0x40; i++) {
+                        tmp2 |= tmp3 << i;
+                    }
+                    _isImmUsed = true;
+                    _isImmSigned = false;
+                    _imm._imm = tmp2 << 0x2;
+                    logger->debugPrint("DEBUG: _imm._imm: 0x%016X\n", _imm._imm);
+                } else if(_variant == instructionVariants::IMMEDIATE_VART) {
+                    uint64_t tmp = _instruction >> 0xA;
+                    uint64_t tmp2 = tmp % (1 << ((0x15) - (0xA) + 1));
+                    uint64_t tmp3 = ((_instruction >> 0x16) & 1) << 0x2;
+                    _isImmUsed = true;
+                    _isImmSigned = false;
+                    _imm._imm = tmp2 << tmp3;
+                    logger->debugPrint("DEBUG: _imm._imm: 0x%016X\n", _imm._imm);
+                }
+//                else {
+//                    _isImmUsed = true;
+//                    _isImmSigned = false;
+//                    _imm._imm = (_instruction % (1 << 0x1A) << 0x2);
+//                    logger->debugPrint("DEBUG: _imm._imm: 0x%016X\n", _imm._imm);
+//                }
+                return true;
+            }
             case instructionTypes::BL_INSN: {
                 uint64_t tmp = _instruction % (1 << 0x1A);
                 uint64_t tmp2 = (tmp & 1 << (0x18)) >> 0x18;
@@ -135,7 +175,7 @@ namespace Arm64 {
                 }
                 _isImmUsed = true;
                 _isImmSigned = false;
-                _imm._imm = tmp << 2;
+                _imm._imm = tmp << 0x2;
                 logger->debugPrint("DEBUG: _imm._imm: 0x%016X\n", _imm._imm);
                 return true;
             }
@@ -173,6 +213,11 @@ namespace Arm64 {
                     logger->debugPrint("DEBUG: _imm._imm: 0x%016X\n", _imm._imm);
                 }
                 break;
+            case instructionTypes::AND_INSN: {
+                _isImmUsed = true;
+                _isImmSigned = false;
+                _imm._imm = 0x6969696969696969;
+            }
 //        default:
 //            imm = 0;
 //            break;
@@ -181,13 +226,14 @@ namespace Arm64 {
     }
 
     bool Instruction::decodeRd() {
-        if (_type != -1 && _variant != -1) {
+        if (_type != -1 && _variant != -1 && _type != instructionTypes::CMP_INSN) {
             switch (_variant) {
                 case instructionVariants::IMMEDIATE_VART:
                 case instructionVariants::SP_PLUS_REGISTER_VART:
                 case instructionVariants::REGISTER_SHIFTED_REGISTER_VART:
                 case instructionVariants::EXTENDED_REGISTER_VART:
                 case instructionVariants::SHIFTED_REGISTER_VART:
+                case instructionVariants::REGISTER_VART:
                 case instructionVariants::LITERAL_VART:
                     _rd = _instruction % (1 << 5);
                     logger->debugPrint("DEBUG: _rd: %d\n", _rd);
@@ -203,15 +249,16 @@ namespace Arm64 {
 
     bool Instruction::decodeRn() {
         if (_type != -1 && _variant != -1 && _type != instructionTypes::ADRP_INSN &&
-        _type != instructionTypes::ADR_INSN && _type != instructionTypes::LDR_INSN) {
+        _type != instructionTypes::ADR_INSN && _type != instructionTypes::LDR_INSN && _type != instructionTypes::MOV_INSN) {
             switch (_variant) {
                 case instructionVariants::IMMEDIATE_VART:
                 case instructionVariants::SP_PLUS_REGISTER_VART:
                 case instructionVariants::REGISTER_SHIFTED_REGISTER_VART:
                 case instructionVariants::EXTENDED_REGISTER_VART:
                 case instructionVariants::SHIFTED_REGISTER_VART:
+                case instructionVariants::REGISTER_VART:
                     _rn = (_instruction >> 5) % (1 << ((9)-(5)+1));
-                    logger->debugPrint("DEBUG: _rn: %d\n", _rd);
+                    logger->debugPrint("DEBUG: _rn: %d\n", _rn);
                     return _rn <= 40;
                 default:
                     logger->debugPrint("DEBUG: _rn: NONE%s", "\n");
@@ -219,6 +266,72 @@ namespace Arm64 {
             }
         }
         logger->debugPrint("DEBUG: _rn: NONE%s", "\n");
+        return false;
+    }
+    bool Instruction::decodeRm() {
+        if (_type != -1 && _variant != -1 && _type != instructionTypes::ADRP_INSN &&
+        _type != instructionTypes::ADR_INSN && _type != instructionTypes::LDR_INSN) {
+            switch (_variant) {
+                case instructionVariants::IMMEDIATE_VART:
+                case instructionVariants::SP_PLUS_REGISTER_VART:
+                case instructionVariants::REGISTER_SHIFTED_REGISTER_VART:
+                case instructionVariants::EXTENDED_REGISTER_VART:
+                case instructionVariants::SHIFTED_REGISTER_VART:
+                case instructionVariants::REGISTER_VART:
+                    _rm = (_instruction >> 16) % (1 << ((20)-(16)+1));
+                    logger->debugPrint("DEBUG: _rm: %d\n", _rm);
+                    return _rm <= 40;
+                default:
+                    logger->debugPrint("DEBUG: _rm: NONE%s", "\n");
+                    return false;
+            }
+        }
+        logger->debugPrint("DEBUG: _rm: NONE%s", "\n");
+        return false;
+    }
+
+    bool Instruction::decodeCond() {
+        if (_type != -1 && _variant != -1 && _type == instructionTypes::B_INSN &&
+        _variant == instructionVariants::CONDITIONAL_VART) {
+            uint64_t tmp = _instruction >> 0x0;
+            uint64_t tmp2 = tmp % (1 << ((0x3)-(0x0)+1));
+            switch(tmp2) {
+                case 0:
+                    _cond = conditions::EQ_NE_COND;
+                    break;
+                case 1:
+                    _cond = conditions::CS_CC_COND;
+                    break;
+                case 4:
+                    _cond = conditions::MI_PL_COND;
+                    break;
+                case 6:
+                    _cond = conditions::VS_VC_COND;
+                    break;
+                case 8:
+                    _cond = conditions::HI_LS_COND;
+                    break;
+                case 0xA:
+                    _cond = conditions::GE_LT_COND;
+                    break;
+                case 0xB:
+                    _cond = conditions::GE_LT_COND;
+                    break;
+                case 0xC:
+                    _cond = conditions::GT_LE_COND;
+                    break;
+                case 0xE:
+                    _cond = conditions::AL_COND;
+                    break;
+                default:
+                    _cond = conditions::UNK_COND;
+                    break;
+            }
+            logger->debugPrint("DEBUG: tmp2: %d %s", tmp2, "\n");
+            logger->debugPrint("DEBUG: _cond: %d %s", _cond, "\n");
+            return true;
+        }
+        logger->debugPrint("DEBUG: _cond: NONE%s", "\n");
         return false;
     }
 
@@ -229,7 +342,11 @@ namespace Arm64 {
             type = std::string("UNKNOWN");
             unknown = true;
         } else {
-            type = instructionNames[_type];
+            if(_variant == instructionVariants::CONDITIONAL_VART) {
+                type = type.append(instructionNames[_type]).append(".").append(conditionNames[_cond]);
+            } else {
+                type = instructionNames[_type];
+            }
         }
         logger->print("0x%016llX:\t%s\t\t", _baseAddress + _address, type.c_str());
         if(!unknown) {
@@ -237,6 +354,14 @@ namespace Arm64 {
                 logger->print("x%d", _rd);
                 if(_rn != -1) {
                     logger->print(", x%d", _rn);
+                }
+                if(_rm != -1 && !_isImmUsed) {
+                    logger->print(", x%d", _rm);
+                }
+            } else if(_rn != -1) {
+                logger->print("x%d", _rn);
+                if(_rm != -1 && !_isImmUsed) {
+                    logger->print(", x%d", _rm);
                 }
             }
             if(_isImmUsed) {
@@ -250,15 +375,21 @@ namespace Arm64 {
                     }
                 } else if (_type == instructionTypes::ADR_INSN || _type == instructionTypes::ADRP_INSN) {
                     if (_isImmSigned) {
-                        logger->print(", 0x%016llX", _baseAddress + _address + _imm._immSigned);
+                        logger->print(", #0x%016llX", _baseAddress + _address + _imm._immSigned);
                     } else {
-                        logger->print(", 0x%016llX", _baseAddress + _address + _imm._imm);
+                        logger->print(", #0x%016llX", _baseAddress + _address + _imm._imm);
                     }
-                } else if (_type == instructionTypes::BL_INSN) {
+                } else if (_type == instructionTypes::BL_INSN || _type == instructionTypes::B_INSN) {
                     if (_isImmSigned) {
-                        logger->print("0x%016llX", _baseAddress + _address + _imm._immSigned);
+                        logger->print("#0x%016llX", _baseAddress + _address + _imm._immSigned);
                     } else {
-                        logger->print("0x%016llX", _baseAddress + _address + _imm._imm);
+                        logger->print("#0x%016llX", _baseAddress + _address + _imm._imm);
+                    }
+                } else {
+                    if (_isImmSigned) {
+                        logger->print(", #0x%016llX", _imm._immSigned);
+                    } else {
+                        logger->print(", #0x%016llX", _imm._imm);
                     }
                 }
             }
@@ -271,6 +402,8 @@ namespace Arm64 {
         decodeImm();
         decodeRd();
         decodeRn();
+        decodeRm();
+        decodeCond();
         printDisassembly();
     }
 
@@ -279,15 +412,15 @@ namespace Arm64 {
         std::pair<int, int> value1;
         std::pair<int, int> value2;
         std::pair<std::pair<int, int>, std::pair<int, int>> value;
-        /*****************************************************************************
-         *  The ADD (extended register) instruction
-         *  Mask:       0x7FE00000(0b01111111111000000000000000000000)
-         *  Result:     0x0B200000(0b00001011001000000000000000000000)
-         *  match if instruction(?) & mask(0x7FE00000) == result(0x0B200000)        */
-        value1 = std::make_pair(instructionMasks::M_7FE00000_MASK, instructionResults::R_0B200000_RESULT);
-        value2 = std::make_pair(instructionTypes::ADD_INSN, instructionVariants::EXTENDED_REGISTER_VART);
-        value = std::make_pair(value1, value2);
-        _instructionTypes.insert(std::make_pair(++key, value));
+//        /*****************************************************************************
+//         *  The ADD (extended register) instruction
+//         *  Mask:       0x7FE00000(0b01111111111000000000000000000000)
+//         *  Result:     0x0B000000(0b00001011000000000000000000000000)
+//         *  match if instruction(?) & mask(0x7FE00000) == result(0x0B000000)        */
+//        value1 = std::make_pair(instructionMasks::M_7FE00000_MASK, instructionResults::R_0B000000_RESULT);
+//        value2 = std::make_pair(instructionTypes::ADD_INSN, instructionVariants::EXTENDED_REGISTER_VART);
+//        value = std::make_pair(value1, value2);
+//        _instructionTypes.insert(std::make_pair(++key, value));
         /*****************************************************************************
          *  The ADD (immediate) instruction
          *  Mask:       0x7F800000(0b01111111100000000000000000000000)
@@ -352,6 +485,15 @@ namespace Arm64 {
         value = std::make_pair(value1, value2);
         _instructionTypes.insert(std::make_pair(++key, value));
         /*****************************************************************************
+         *  The AND (immediate) instruction
+         *  Mask:       0x7F800000(0b01111111100000000000000000000000)
+         *  Result:     0x12000000(0b00010010000000000000000000000000)
+         *  match if instruction(?) & mask(0x7F800000) == result(0x12000000)        */
+        value1 = std::make_pair(instructionMasks::M_7F800000_MASK, instructionResults::R_12000000_RESULT);
+        value2 = std::make_pair(instructionTypes::AND_INSN, instructionVariants::IMMEDIATE_VART);
+        value = std::make_pair(value1, value2);
+        _instructionTypes.insert(std::make_pair(++key, value));
+        /*****************************************************************************
          *  The AND (shifted register) instruction
          *  Mask:       0x7F200000(0b01111111001000000000000000000000)
          *  Result:     0x0A000000(0b00001010000000000000000000000000)
@@ -367,6 +509,15 @@ namespace Arm64 {
          *  match if instruction(?) & mask(0x7F200000) == result(0x0A000000)        */
         value1 = std::make_pair(instructionMasks::M_7F200000_MASK, instructionResults::R_0A000000_RESULT);
         value2 = std::make_pair(instructionTypes::AND_INSN, instructionVariants::SHIFTED_REGISTER_VART);
+        value = std::make_pair(value1, value2);
+        _instructionTypes.insert(std::make_pair(++key, value));
+        /*****************************************************************************
+         *  The B.cond instruction aka Conditional branch (immediate) the instruction
+         *  Mask:       0xFF000010(0b11111111000000000000000000010000)
+         *  Result:     0x54000000(0b01010100000000000000000000000000)
+         *  match if instruction(?) & mask(0xFF000010) == result(0x54000000)        */
+        value1 = std::make_pair(instructionMasks::M_FF000010_MASK, instructionResults::R_54000000_RESULT);
+        value2 = std::make_pair(instructionTypes::B_INSN, instructionVariants::CONDITIONAL_VART);
         value = std::make_pair(value1, value2);
         _instructionTypes.insert(std::make_pair(++key, value));
         /*****************************************************************************
@@ -379,12 +530,39 @@ namespace Arm64 {
         value = std::make_pair(value1, value2);
         _instructionTypes.insert(std::make_pair(++key, value));
         /*****************************************************************************
+         *  The CMP (register) instruction
+         *  Mask:       0x0FF0F010(0b00001111111100001111000000010000)
+         *  Result:     0x0B000010(0b00001011000000000000000000010000)
+         *  match if instruction(?) & mask(0x0FF0F010) == result(0x0B000010)        */
+        value1 = std::make_pair(instructionMasks::M_0FF0F010_MASK, instructionResults::R_0B000010_RESULT);
+        value2 = std::make_pair(instructionTypes::CMP_INSN, instructionVariants::REGISTER_VART);
+        value = std::make_pair(value1, value2);
+        _instructionTypes.insert(std::make_pair(++key, value));
+        /*****************************************************************************
          *  The LDR (literal) instruction
          *  Mask:       0xFF000000(0b11111111000000000000000000000000)
          *  Result:     0x58000000(0b01011000000000000000000000000000)
          *  match if instruction(?) & mask(0xFF000000) == result(0x58000000)        */
         value1 = std::make_pair(instructionMasks::M_FF000000_MASK, instructionResults::R_58000000_RESULT);
         value2 = std::make_pair(instructionTypes::LDR_INSN, instructionVariants::LITERAL_VART);
+        value = std::make_pair(value1, value2);
+        _instructionTypes.insert(std::make_pair(++key, value));
+        /*****************************************************************************
+         *  The MOV (register) instruction
+         *  Mask:       0x7FE0FFE0(0b01111111111000001111111111100000)
+         *  Result:     0x2A0003E0(0b00101010000000000000001111100000)
+         *  match if instruction(?) & mask(0xFF000000) == result(0x2A0003E0)        */
+        value1 = std::make_pair(instructionMasks::M_7FE0FFE0_MASK, instructionResults::R_2A0003E0_RESULT);
+        value2 = std::make_pair(instructionTypes::MOV_INSN, instructionVariants::REGISTER_VART);
+        value = std::make_pair(value1, value2);
+        _instructionTypes.insert(std::make_pair(++key, value));
+        /*****************************************************************************
+         *  The SUB (shifted register) instruction
+         *  Mask:       0x7F200000(0b01111111001000000000000000000000)
+         *  Result:     0x4B000000(0b01001011000000000000000000000000)
+         *  match if instruction(?) & mask(0x7F200000) == result(0x4B000000)        */
+        value1 = std::make_pair(instructionMasks::M_7F200000_MASK, instructionResults::R_4B000000_RESULT);
+        value2 = std::make_pair(instructionTypes::SUB_INSN, instructionVariants::SHIFTED_REGISTER_VART);
         value = std::make_pair(value1, value2);
         _instructionTypes.insert(std::make_pair(++key, value));
     }

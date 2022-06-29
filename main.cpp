@@ -21,7 +21,7 @@ int main() {
     std::vector<uint32_t> binaryData(fileSize / sizeof(uint32_t));
     fileStream.read((char*)&binaryData[0], fileSize);
     fileStream.close();
-    for(int i = 0x0; i < 0x20; i+=4) {
+    for(int i = 0x0; i < 0x100; i+=4) {
         binary = new Arm64::Instruction(i, binaryData);
     }
 
